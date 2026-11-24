@@ -80,15 +80,16 @@ AB_OTA_UPDATER := true
 AB_OTA_PARTITIONS += boot dtbo vendor_boot init_boot vbmeta vbmeta_system vbmeta_vendor
 
 BOARD_SUPER_PARTITION_GROUPS := xiaomi_dynamic_partitions
-BOARD_XIAOMI_DYNAMIC_PARTITIONS_PARTITION_LIST := system system_ext vendor product odm vendor_dlkm odm_dlkm
-BOARD_XIAOMI_DYNAMIC_PARTITIONS_SIZE := 9122611200
-BOARD_SUPER_PARTITION_SIZE := 9126805504
+BOARD_XIAOMI_DYNAMIC_PARTITIONS_PARTITION_LIST := system system_ext vendor product odm vendor_dlkm odm_dlkm system_dlkm
+BOARD_XIAOMI_DYNAMIC_PARTITIONS_SIZE := 9648996352
+BOARD_SUPER_PARTITION_SIZE := 9653190656
 
 BOARD_USES_VENDORIMAGE := true
 TARGET_COPY_OUT_VENDOR := vendor
 
 # TWRP Settings
 TW_THEME := portrait_hdpi
+TW_FRAMERATE := 60
 # Version tag (OrangeFox port of the Advnirr TWRP tree)
 TW_DEVICE_VERSION := degas
 RECOVERY_SDCARD_ON_DATA := true
@@ -170,7 +171,7 @@ TW_INCLUDE_RESETPROP := true
 # ── OrangeFox ────────────────────────────────────────────────────────────────
 # Names verified against bootable/recovery/orangefox.mk (fox_16.0). FOX_* vars
 # read by vendor/recovery/OrangeFox_A16.sh are exported from vendorsetup.sh.
-OF_MAINTAINER := Unofficial
+OF_MAINTAINER := saiquer
 OF_FORCE_PREBUILT_KERNEL := 1
 OF_USE_LZ4_COMPRESSION := 1
 OF_USE_MAGISKBOOT := 1

@@ -1,139 +1,234 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
-# patch_touch_clean.sh — assemble a flashable, CLEAN TWRP vendor_boot by
-# combining:
-#   * vendor_ramdisk00 (kernel modules) from a base image that HAS them, with
-#     the patched Goodix touch driver swapped in, and
-#   * vendor_ramdisk01 (the freshly built TWRP recovery ramdisk, which already
-#     carries our recovery.fstab + battery fix + goodix firmware), with the
-#     touch sysfs init triggers added.
+# patch_touch_clean.sh — Repack OrangeFox vendor_ramdisk01 onto a matching
+# base vendor_boot.img (stock HyperOS / saiOS / AOSP) for Xiaomi 14T (degas).
 #
-# WHY a combo: the device tree builds with TARGET_NO_KERNEL, so `mka
-# vendorbootimage` produces a vendor_boot WITHOUT the 215 kernel modules
-# (touch/display/UFS). Those live in the stock/base vendor_ramdisk00. We graft
-# the fresh TWRP ramdisk onto the base's module ramdisk + proven geometry.
+# Preserves:
+#   - vendor_ramdisk00 from MODBASE untouched (stock 6.1.157 modules + ROM's
+#     first_stage_ramdisk/fstab.mt6897) so normal Android boot is unaffected.
+#   - The freshly compiled vendor_ramdisk01 from OrangeFox untouched, including
+#     init.recovery.mt6897.rc (MTP ConfigFS, AnyKernel3 /sbin/getprop, dynamic
+#     Slot A/B symlinks, and MiTEE/KeyMint/Gatekeeper/Weaver/OMAPI decrypt),
+#     recovery-only patched 6.1.157 xiaomi_touch_common.ko, and Goodix firmware.
+#   - Exact 64 MiB (67,108,864 B) vendor_boot v4 layout with relocated AVB0/AVBf
+#     footer when present in MODBASE (required for clean MT6897 / Fenrir LK boot).
 #
-# Carries NO decrypt scaffolding and does NOT touch sys.usb.config, so
-# MTP / USB-OTG / sideload work.
-#
-# Needs (ramdisk /dev nodes). Run it yourself: `bash patch_touch_clean.sh`
-# Requires: unpack_bootimg.py, mkbootimg, lz4, cpio.
+# Optional env vars:
+#   MODBASE=/path/to/base_vendor_boot.img
+#   FRESH=/path/to/out/target/product/degas/vendor_boot.img
+#   OUTIMG=/path/to/output_vendor_boot.img
+#   DECRYPTED_DATA=1   Strip FBE/inlinecrypt flags from recovery.fstab /data
+#                      (recommended for decrypted ROMs such as saiOS).
 # ============================================================================
-set -e
+set -euo pipefail
 
-# Build top — defaults to the directory this script lives in (the repo is checked
-# out at the build top). Override with WORKDIR=/path/to/build/top if your layout
-# differs.
-WORKDIR="${WORKDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-MODBASE="$WORKDIR/ofox_degas-vendor_boot.img"          # base: modules + proven geometry
-FRESH="$WORKDIR/out/target/product/degas/vendor_boot.img"  # fresh build: TWRP ramdisk01
-OUTIMG="$WORKDIR/ofox_degas-vendor_boot-clean.img"
-FW_CFG="$WORKDIR/goodix_cfg_group_degas.bin"
-FW_BIN="$WORKDIR/goodix_firmware_degas.bin"
-PATCHED_KO="$WORKDIR/xiaomi_touch_common_patched.ko"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BUILD_TOP:-}" ]; then
+    TOP="$BUILD_TOP"
+elif [ -f "$SCRIPT_DIR/out/target/product/degas/vendor_boot.img" ]; then
+    TOP="$SCRIPT_DIR"
+elif [ -f "$SCRIPT_DIR/../../../out/target/product/degas/vendor_boot.img" ]; then
+    TOP="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+else
+    TOP="$SCRIPT_DIR"
+fi
 
-UNPACK_BIN="unpack_bootimg.py"
-MKBOOTIMG_BIN="mkbootimg"
+MODBASE="${MODBASE:-$SCRIPT_DIR/ofox_degas-vendor_boot.img}"
+FRESH="${FRESH:-$TOP/out/target/product/degas/vendor_boot.img}"
+OUTIMG="${OUTIMG:-$SCRIPT_DIR/ofox_degas-vendor_boot-clean.img}"
+DECRYPTED_DATA="${DECRYPTED_DATA:-0}"
 
-cd "$WORKDIR"
-command -v $UNPACK_BIN   >/dev/null || { echo "ERROR: $UNPACK_BIN not found"; exit 1; }
-command -v $MKBOOTIMG_BIN >/dev/null || { command -v mkbootimg.py >/dev/null && MKBOOTIMG_BIN=mkbootimg.py || { echo "ERROR: mkbootimg not found"; exit 1; }; }
-for f in "$MODBASE" "$FRESH" "$PATCHED_KO" "$FW_CFG" "$FW_BIN"; do
-    [ -f "$f" ] || { echo "ERROR: missing $f"; exit 1; }
+for cmd in lz4 cpio python3; do
+    command -v "$cmd" >/dev/null || { echo "ERROR: $cmd not found" >&2; exit 1; }
+done
+for f in "$MODBASE" "$FRESH"; do
+    [ -f "$f" ] || { echo "ERROR: missing $f" >&2; exit 1; }
 done
 
-WS="$WORKDIR/touch_clean_workspace"
-EXTRACTED="$WS/base_extracted"      # from MODBASE (gives geometry + ramdisk00 modules)
-FRESH_EXTRACTED="$WS/fresh_extracted"
-BASE_RD="$WS/base_ramdisk00"        # modules ramdisk unpacked
-TWRP_RD="$WS/ofox_ramdisk01"        # fresh TWRP ramdisk unpacked
+python3 - "$MODBASE" "$FRESH" "$OUTIMG" "$SCRIPT_DIR" "$DECRYPTED_DATA" <<'PYEOF'
+import os, re, shutil, struct, subprocess, sys, tempfile
+from pathlib import Path
 
-echo "=== Cleaning workspace ==="
-rm -rf "$WS"
-mkdir -p "$EXTRACTED" "$FRESH_EXTRACTED" "$BASE_RD" "$TWRP_RD"
+modbase_p = Path(sys.argv[1])
+fresh_p = Path(sys.argv[2])
+out_p = Path(sys.argv[3])
+dt_dir = Path(sys.argv[4])
+decrypted_data = sys.argv[5] == "1"
 
-# 1. Unpack base (modules + geometry)
-echo "=== [1/6] Unpacking base $MODBASE (geometry + modules) ==="
-$UNPACK_BIN --boot_img "$MODBASE" --out "$EXTRACTED" --format=mkbootimg > "$WS/mkbootimg_args"
-ARGS=$(cat "$WS/mkbootimg_args")
-printf '#!/bin/bash\n%s --vendor_boot %s\n' "$MKBOOTIMG_BIN $ARGS" "$OUTIMG" > "$WS/repack.sh"
-chmod +x "$WS/repack.sh"
+def parse_vboot_v4(blob: bytes, label: str):
+    if blob[:8] != b"VNDRBOOT":
+        raise SystemExit(f"ERROR: {label} is not a VNDRBOOT image")
+    _, hdr_ver, page_sz, _, _, ram_sz = struct.unpack_from("<8s5I", blob, 0)
+    if hdr_ver != 4:
+        raise SystemExit(f"ERROR: {label} header_version={hdr_ver} (expected 4)")
+    _, _, hdr_sz, dtb_sz, _, vrt_sz, vrt_num, vrt_entry_sz, bootcfg_sz = struct.unpack_from("<I16sIIQIIII", blob, 2076)
+    align = lambda n: (n + page_sz - 1) & ~(page_sz - 1)
+    o_ram = align(hdr_sz)
+    o_dtb = o_ram + align(ram_sz)
+    o_vrt = o_dtb + align(dtb_sz)
+    o_bc = o_vrt + align(vrt_sz)
+    frags = []
+    for i in range(vrt_num):
+        fsz, foff, ftype = struct.unpack_from("<III", blob, o_vrt + i * vrt_entry_sz)
+        frags.append((fsz, foff, ftype, blob[o_ram + foff : o_ram + foff + fsz]))
+    return {
+        "page_sz": page_sz, "hdr_sz": hdr_sz, "dtb_sz": dtb_sz,
+        "vrt_sz": vrt_sz, "vrt_num": vrt_num, "vrt_entry_sz": vrt_entry_sz,
+        "bootcfg_sz": bootcfg_sz, "o_ram": o_ram, "o_dtb": o_dtb, "o_vrt": o_vrt,
+        "dtb": blob[o_dtb : o_dtb + dtb_sz],
+        "vrt": bytearray(blob[o_vrt : o_vrt + vrt_sz]),
+        "bootcfg": blob[o_bc : o_bc + bootcfg_sz],
+        "frags": frags,
+    }
 
-# 2. Patch the touch driver into the base's module ramdisk (vendor_ramdisk00)
-echo "=== [2/6] Patching touch .ko into vendor_ramdisk00 ==="
-sh -c "cd '$BASE_RD' && lz4 -d -c '$EXTRACTED/vendor_ramdisk00' | cpio -idm"
-cp "$PATCHED_KO" "$BASE_RD/lib/modules/xiaomi_touch_common.ko"
-chmod 644 "$BASE_RD/lib/modules/xiaomi_touch_common.ko"
-sh -c "cd '$BASE_RD' && find . | sort | cpio -H newc -o | lz4 -l -12 --favor-decSpeed -c > '$EXTRACTED/vendor_ramdisk00'"
-echo "  [+] patched .ko in modules ramdisk"
+base_bytes = modbase_p.read_bytes()
+fresh_bytes = fresh_p.read_bytes()
+base = parse_vboot_v4(base_bytes, "MODBASE")
+fresh = parse_vboot_v4(fresh_bytes, "FRESH")
 
-# 3. Pull the FRESH TWRP ramdisk (vendor_ramdisk01) out of the new build
-echo "=== [3/6] Extracting fresh TWRP ramdisk from build ==="
-$UNPACK_BIN --boot_img "$FRESH" --out "$FRESH_EXTRACTED" >/dev/null
-sh -c "cd '$TWRP_RD' && lz4 -d -c '$FRESH_EXTRACTED/vendor_ramdisk01' | cpio -idm"
+if base["vrt_num"] != 2:
+    raise SystemExit(f"ERROR: MODBASE has {base['vrt_num']} ramdisk fragments (expected 2)")
 
-# 4. Inject touch firmware (vendor/firmware) + touch init triggers
-echo "=== [4/6] Injecting touch firmware + init triggers into fresh TWRP ramdisk ==="
-mkdir -p "$TWRP_RD/vendor/firmware" "$TWRP_RD/lib/firmware"
-cp "$FW_CFG" "$FW_BIN" "$TWRP_RD/vendor/firmware/"
-cp "$FW_CFG" "$FW_BIN" "$TWRP_RD/lib/firmware/"
-chmod 644 "$TWRP_RD/vendor/firmware/goodix"* "$TWRP_RD/lib/firmware/goodix"*
+# Locate recovery ramdisk (type=0x2) in FRESH, fallback to last fragment
+rec_frag = None
+for fsz, foff, ftype, fdata in fresh["frags"]:
+    if ftype == 2:
+        rec_frag = fdata
+        break
+if rec_frag is None:
+    rec_frag = fresh["frags"][-1][3]
 
-# init.recovery.mt6897.rc is loaded by init (ro.hardware=mt6897). Create it with
-# ONLY the touch sysfs writes (clean: no decrypt services).
-tee "$TWRP_RD/init.recovery.mt6897.rc" > /dev/null << 'RC_EOF'
-# Touch driver bring-up
-on early-init
-    write /sys/class/touch/touch_dev/enable_touch_raw 0
+# Decompress and inspect/patch recovery ramdisk (vendor_ramdisk01)
+with tempfile.TemporaryDirectory(prefix="ofox_repack_") as td:
+    td = Path(td)
+    rec_cpio = td / "rec.cpio"
+    rec_dir = td / "rec_root"
+    rec_dir.mkdir()
+    subprocess.run(["lz4", "-d", "-c"], input=rec_frag, stdout=open(rec_cpio, "wb"), check=True)
+    subprocess.run(["cpio", "-idm", "--no-absolute-filenames"], cwd=rec_dir, stdin=open(rec_cpio, "rb"), check=True, stderr=subprocess.DEVNULL)
 
-on boot
-    write /sys/class/touch/touch_dev/enable_touch_raw 0
-    write /sys/class/touch/touch_dev/panel_display "U"
+    # Ensure recovery-only patched 6.1.157 touch module & Goodix firmware are present
+    rec_ko = dt_dir / "recovery/root/lib/modules/xiaomi_touch_common.ko"
+    if rec_ko.is_file():
+        dst_ko = rec_dir / "lib/modules/xiaomi_touch_common.ko"
+        dst_ko.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(rec_ko, dst_ko)
+        os.chmod(dst_ko, 0o644)
 
-# USB: force the ConfigFS gadget. TWRP's init.rc hardcodes sys.usb.configfs=0,
-# which drives the legacy /sys/class/android_usb path — that node does not exist
-# on MT6897 (Android 16), so adb/MTP never enumerate. The ConfigFS path (g1
-# gadget) is already present in init.rc and works once configfs=1. `on init`
-# runs after init.rc's early-init (=0) and before `on fs` (which reads it).
-on init
-    setprop sys.usb.configfs 1
+    for fw_name in ("goodix_cfg_group_degas.bin", "goodix_firmware_degas.bin"):
+        src_fw = None
+        for cand in (
+            dt_dir / "recovery/root/vendor/firmware" / fw_name,
+            dt_dir / "recovery/root/lib/firmware" / fw_name,
+            dt_dir / fw_name,
+        ):
+            if cand.is_file():
+                src_fw = cand
+                break
+        if src_fw:
+            for dst_sub in ("vendor/firmware", "lib/firmware"):
+                dst_fw = rec_dir / dst_sub / fw_name
+                dst_fw.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src_fw, dst_fw)
+                os.chmod(dst_fw, 0o644)
 
-# USB MTP over ConfigFS. TWRP's init.rc has triggers for adb/fastboot/sideload
-# but none for mtp,adb, so enabling MTP would leave the UDC unbound. Create the
-# ffs.mtp function and mount its functionfs at boot (runs after init.rc's own
-# `on fs && configfs=1` that creates g1), then bind mtp+adb once TWRP's
-# twrpmtp-ffs daemon has written the descriptors (sys.usb.ffs.mtp.ready=1).
-on fs && property:sys.usb.configfs=1
-    mkdir /config/usb_gadget/g1/functions/ffs.mtp
-    mkdir /dev/usb-ffs/mtp 0770 shell shell
-    # NB: this kernel's functionfs rejects the `dmode` option (Invalid argument);
-    # keep it to the same simple options adb uses.
-    mount functionfs mtp /dev/usb-ffs/mtp uid=2000,gid=2000
+    # Ensure degas_slot_symlinks.sh & degas_prepdecrypt.sh are executable
+    for sh_name in ("degas_slot_symlinks.sh", "degas_prepdecrypt.sh"):
+        sh_p = rec_dir / "system/bin" / sh_name
+        if sh_p.is_file():
+            os.chmod(sh_p, 0o755)
 
-on property:sys.usb.config=mtp,adb && property:sys.usb.ffs.ready=1 && property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
-    write /config/usb_gadget/g1/idProduct 0x4EE2
-    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp,adb"
-    symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f1
-    symlink /config/usb_gadget/g1/functions/ffs.adb /config/usb_gadget/g1/configs/b.1/f2
-    write /config/usb_gadget/g1/UDC ${sys.usb.controller}
-    setprop sys.usb.state ${sys.usb.config}
-RC_EOF
-chmod 644 "$TWRP_RD/init.recovery.mt6897.rc"
-echo "  [+] firmware + touch init.recovery.mt6897.rc added"
+    # Sanity-check intact init.recovery.mt6897.rc
+    init_rc = rec_dir / "init.recovery.mt6897.rc"
+    if not init_rc.is_file():
+        raise SystemExit("ERROR: init.recovery.mt6897.rc missing from freshly built recovery ramdisk!")
 
-# 5. Repack the fresh TWRP ramdisk over the base's vendor_ramdisk01
-echo "=== [5/6] Repacking TWRP ramdisk ==="
-sh -c "cd '$TWRP_RD' && find . | sort | cpio -H newc -o | lz4 -l -12 --favor-decSpeed -c > '$EXTRACTED/vendor_ramdisk01'"
+    # Optional decrypted /data adjustment for decrypted ROMs (e.g. saiOS)
+    if decrypted_data:
+        fstab_p = rec_dir / "system/etc/recovery.fstab"
+        txt = fstab_p.read_text(encoding="utf-8")
+        new_lines = []
+        for l in txt.splitlines():
+            if "/dev/block/by-name/userdata" in l and "/data" in l:
+                for pat in (
+                    r",inlinecrypt",
+                    r",fileencryption=[^,\s]+",
+                    r",keydirectory=[^,\s]+",
+                    r",fsverity",
+                    r",metadata_encryption=[^,\s]+",
+                ):
+                    l = re.sub(pat, "", l)
+            new_lines.append(l)
+        fstab_p.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        print("  [+] Adjusted recovery.fstab /data for decrypted ROM (saiOS mode)")
 
-# 6. Build final vendor_boot
-echo "=== [6/6] Building final image ==="
-bash "$WS/repack.sh"
-echo ""
-echo "=== sizes ==="
-echo "  ramdisk00 (modules+touch): $(stat -c%s "$EXTRACTED/vendor_ramdisk00") B"
-echo "  ramdisk01 (TWRP+touch):    $(stat -c%s "$EXTRACTED/vendor_ramdisk01") B"
-echo "  final image:               $(stat -c%s "$OUTIMG") B   (partition limit: 67108864)"
-[ "$(stat -c%s "$OUTIMG")" -le 67108864 ] && echo "  FITS in vendor_boot ✓" || echo "  ⚠️  OVER 64 MB — won't fit, need to slim further"
-echo ""
-echo "=== DONE: $OUTIMG ==="
-echo "Flash with: fastboot flash vendor_boot $OUTIMG   (or to the active slot)"
+    # Repack recovery ramdisk with root:root ownership & lz4 -l -12 --favor-decSpeed
+    file_list = subprocess.check_output(["sh", "-c", "find . | sed 's|^\\./||' | grep -v '^\\.$' | sort"], cwd=rec_dir)
+    cpio_out = subprocess.check_output(["cpio", "-H", "newc", "-o", "-R", "0:0"], cwd=rec_dir, input=file_list, stderr=subprocess.DEVNULL)
+    new_f1_lz4 = subprocess.check_output(["lz4", "-l", "-12", "--favor-decSpeed", "-c"], input=cpio_out)
+
+    # Keep base frag0 (vendor_ramdisk00) untouched; recompress with -12 ONLY if needed to fit 64 MiB
+    f0_lz4 = base["frags"][0][3]
+    page_sz = base["page_sz"]
+    align = lambda n: (n + page_sz - 1) & ~(page_sz - 1)
+
+    def calc_end(f0_len, f1_len):
+        o_ram = base["o_ram"]
+        o_dtb = o_ram + align(f0_len + f1_len)
+        o_vrt = o_dtb + align(base["dtb_sz"])
+        o_bc = o_vrt + align(base["vrt_sz"])
+        return o_bc + align(base["bootcfg_sz"])
+
+    avbf_idx = len(base_bytes) - 64
+    has_avbf = len(base_bytes) == 67108864 and base_bytes[avbf_idx : avbf_idx + 4] == b"AVBf"
+    avb0_sz = 0
+    if has_avbf:
+        _, old_vb_off, avb0_sz = struct.unpack_from(">QQQ", base_bytes, avbf_idx + 12)
+        if base_bytes[old_vb_off : old_vb_off + 4] != b"AVB0":
+            has_avbf = False
+
+    limit = (avbf_idx - avb0_sz) if has_avbf else 67108864
+    if calc_end(len(f0_lz4), len(new_f1_lz4)) > limit:
+        print("  [*] Recompressing vendor_ramdisk00 with lz4 -l -12 for extra 64 MiB headroom...")
+        f0_raw = subprocess.check_output(["lz4", "-d", "-c"], input=f0_lz4)
+        f0_lz4 = subprocess.check_output(["lz4", "-l", "-12", "--favor-decSpeed", "-c"], input=f0_raw)
+
+    new_f0_sz = len(f0_lz4)
+    new_f1_sz = len(new_f1_lz4)
+    new_ram_sz = new_f0_sz + new_f1_sz
+    o_ram = base["o_ram"]
+    new_o_dtb = o_ram + align(new_ram_sz)
+    new_o_vrt = new_o_dtb + align(base["dtb_sz"])
+    new_o_bc = new_o_vrt + align(base["vrt_sz"])
+    new_end = new_o_bc + align(base["bootcfg_sz"])
+
+    print(f"=== sizes ===")
+    print(f"  ramdisk00 (base modules+fstab): {new_f0_sz} B ({new_f0_sz/1048576:.2f} MiB)")
+    print(f"  ramdisk01 (OrangeFox recovery): {new_f1_sz} B ({new_f1_sz/1048576:.2f} MiB)")
+    print(f"  payload end:                    {new_end} B ({new_end/1048576:.2f} MiB) | limit: {limit} B")
+    if new_end > limit:
+        raise SystemExit(f"ERROR: Image overflows 64 MiB vendor_boot partition by {new_end - limit} bytes!")
+
+    out_len = 67108864 if has_avbf else new_end
+    out_vb = bytearray(out_len)
+    out_vb[: base["hdr_sz"]] = base_bytes[: base["hdr_sz"]]
+    struct.pack_into("<I", out_vb, 24, new_ram_sz)
+    out_vb[o_ram : o_ram + new_f0_sz] = f0_lz4
+    out_vb[o_ram + new_f0_sz : o_ram + new_ram_sz] = new_f1_lz4
+    out_vb[new_o_dtb : new_o_dtb + base["dtb_sz"]] = base["dtb"]
+    vrt = bytearray(base["vrt"])
+    struct.pack_into("<II", vrt, 0, new_f0_sz, 0)
+    struct.pack_into("<II", vrt, base["vrt_entry_sz"], new_f1_sz, new_f0_sz)
+    out_vb[new_o_vrt : new_o_vrt + base["vrt_sz"]] = vrt
+    if base["bootcfg_sz"]:
+        out_vb[new_o_bc : new_o_bc + base["bootcfg_sz"]] = base["bootcfg"]
+
+    if has_avbf:
+        out_vb[new_end : new_end + avb0_sz] = base_bytes[old_vb_off : old_vb_off + avb0_sz]
+        out_vb[avbf_idx:] = base_bytes[avbf_idx:]
+        struct.pack_into(">QQ", out_vb, avbf_idx + 12, new_end, new_end)
+        print(f"  [+] Relocated AVB0 ({avb0_sz} B) + AVBf footer (exact 64 MiB = {len(out_vb)} B)")
+
+    out_p.write_bytes(out_vb)
+    print(f"=== DONE: {out_p} ({len(out_vb)} B) ===")
+PYEOF

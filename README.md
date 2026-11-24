@@ -2,8 +2,6 @@
 
 OrangeFox recovery device tree for the **Xiaomi 14T**, codenamed **degas**.
 
-**Port creator and maintainer:** `sigmapro555eshkere`
-
 The tree targets OrangeFox `fox_16.0` on Android 16 / BP2A and builds a
 recovery that runs from the device's A/B `vendor_boot` partition.
 
