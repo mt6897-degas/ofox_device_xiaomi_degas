@@ -4,6 +4,10 @@ on early-init
     write /sys/class/touch/touch_dev/enable_touch_raw 0
 
 on boot
+    insmod /lib/modules/mediatek-cpufreq-hw.ko
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy4/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy7/scaling_governor schedutil
     write /sys/class/touch/touch_dev/enable_touch_raw 0
     write /sys/class/touch/touch_dev/panel_display "U"
     start degas_sbin_getprop
@@ -63,7 +67,16 @@ on property:sys.usb.config=mtp,adb && property:sys.usb.ffs.ready=1 && property:s
 # persist is mounted. It must be mounted rw, as in stock: the TA may write.
 # ═══════════════════════════════════════════════════════════════════════════
 
+service degas_slot_symlinks /system/bin/sh /system/bin/degas_slot_symlinks.sh
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
+
 on fs
+    start degas_slot_symlinks
+
     mkdir /mnt/vendor 0755 root root
     mkdir /mnt/vendor/persist 0771 root system
     # stock fstab.mt6897 options; no fsck, never formatted from here

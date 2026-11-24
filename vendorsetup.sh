@@ -21,6 +21,7 @@ fi
 
 if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
 	# A/B, virtual A/B, recovery in vendor_boot
+	export OF_MAINTAINER="saiquer"
 	export FOX_AB_DEVICE=1
 	export FOX_VIRTUAL_AB_DEVICE=1
 	export FOX_VENDOR_BOOT_RECOVERY=1

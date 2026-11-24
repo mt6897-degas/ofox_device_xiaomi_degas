@@ -34,6 +34,14 @@ odm_dlkm /odm_dlkm ext4 ro wait,slotselect,avb,logical,first_stage_mount
 system_dlkm /system_dlkm erofs ro wait,slotselect,avb,logical,first_stage_mount
 system_dlkm /system_dlkm ext4 ro wait,slotselect,avb,logical,first_stage_mount
 
+# Xiaomi HyperOS mi_ext / mi_product
+mi_ext /mnt/vendor/mi_ext erofs ro wait,slotselect,avb=vbmeta,logical,first_stage_mount,nofail
+mi_ext /mnt/vendor/mi_ext ext4 ro wait,slotselect,avb=vbmeta,logical,first_stage_mount,nofail
+/mnt/vendor/mi_ext /mi_ext erofs ro,bind wait,nofail
+mi_product /mnt/vendor/mi_product erofs ro wait,slotselect,avb=vbmeta,logical,first_stage_mount,nofail
+mi_product /mnt/vendor/mi_product ext4 ro wait,slotselect,avb=vbmeta,logical,first_stage_mount,nofail
+/mnt/vendor/mi_product /mi_product erofs ro,bind wait,nofail
+
 # ColorOS my_* (порт; из донорского fstab.mt6993 без avb_keys=/vendor/etc/oplus_avb.pubkey)
 my_product /my_product ext4 ro,barrier=1 wait,slotselect,logical,first_stage_mount,nofail
 my_product /my_product erofs ro wait,slotselect,logical,first_stage_mount,nofail

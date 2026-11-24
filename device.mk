@@ -73,5 +73,11 @@ PRODUCT_COPY_FILES += \
 # NEEDs libclang_rt.ubsan_standalone-aarch64-android.so, which lives in the
 # Android system partition). Same toolchain as this build (ClangDefaultVersion);
 # provides all 4 __ubsan_handle_* symbols the HAL imports.
+UBSAN_RT_SO := prebuilts/clang/host/linux-x86/clang-r547379/lib/clang/20/lib/linux/libclang_rt.ubsan_standalone-aarch64-android.so
+ifeq ($(wildcard $(UBSAN_RT_SO)),)
+UBSAN_RT_SO := $(firstword $(wildcard prebuilts/clang/host/linux-x86/clang-*/lib/clang/*/lib/linux/libclang_rt.ubsan_standalone-aarch64-android.so))
+endif
+ifneq ($(UBSAN_RT_SO),)
 PRODUCT_COPY_FILES += \
-    prebuilts/clang/host/linux-x86/clang-r547379/lib/clang/20/lib/linux/libclang_rt.ubsan_standalone-aarch64-android.so:$(TARGET_COPY_OUT_RECOVERY)/root/vendor/lib64/libclang_rt.ubsan_standalone-aarch64-android.so
+    $(UBSAN_RT_SO):$(TARGET_COPY_OUT_RECOVERY)/root/vendor/lib64/libclang_rt.ubsan_standalone-aarch64-android.so
+endif

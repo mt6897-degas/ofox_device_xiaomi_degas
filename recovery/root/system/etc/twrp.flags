@@ -1,5 +1,18 @@
-# TWRP v1-format flags for entries of recovery.fstab (v2). In a v2 fstab TWRP
-# splits the fs_mgr flag column on ',' only, so ';flags=...' there is ignored.
-#<mnt_point>              <type>  <device>                       <flags>
-/metadata                 f2fs    /dev/block/by-name/metadata    flags=display="Metadata";backup=1;canbewiped=0
-/mnt/vendor/persist_bak   ext4    /dev/block/by-name/persist     flags=display="Persist";backup=1;canbewiped=0
+# TWRP v1-format flags for degas (Xiaomi 14T).
+# Active-slot symlinks (/dev/block/by-name/{boot,init_boot,vendor_boot,dtbo,vbmeta})
+# are populated dynamically on fs by /system/bin/degas_slot_symlinks.sh so both
+# Slot A and Slot B work identically.
+#<mnt_point>              <type>  <device>                            <flags>
+/cache                    ext4    /dev/block/by-name/rescue           flags=display="Cache";wipeingui;wipeduringfactoryreset
+/metadata                 f2fs    /dev/block/by-name/metadata         flags=display="Metadata";backup=1;canbewiped=0
+/mnt/vendor/persist_bak   ext4    /dev/block/by-name/persist          flags=display="Persist";backup=1;canbewiped=0
+
+# Physical partitions — active slot aware, backup & image flash enabled
+/boot                     emmc    /dev/block/by-name/boot             flags=display="Boot";backup=1;flashimg=1
+/init_boot                emmc    /dev/block/by-name/init_boot        flags=display="Init Boot";backup=1;flashimg=1
+/vendor_boot              emmc    /dev/block/by-name/vendor_boot      flags=display="Vendor Boot";backup=1;flashimg=1
+/dtbo                     emmc    /dev/block/by-name/dtbo             flags=display="DTBO";backup=1;flashimg=1
+/super                    emmc    /dev/block/by-name/super            flags=display="Super";backup=1;flashimg=1
+/vbmeta                   emmc    /dev/block/by-name/vbmeta           flags=display="Vbmeta";backup=1;flashimg=1
+/vbmeta_system            emmc    /dev/block/by-name/vbmeta_system    flags=display="Vbmeta System";backup=1;flashimg=1
+/vbmeta_vendor            emmc    /dev/block/by-name/vbmeta_vendor    flags=display="Vbmeta Vendor";backup=1;flashimg=1
