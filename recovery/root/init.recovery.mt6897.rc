@@ -26,6 +26,15 @@ service degas_haptics_link /system/bin/sh /system/bin/degas_haptics_link.sh
     oneshot
     seclabel u:r:recovery:s0
 
+# AIDL BootControl HAL (MediaTek UFS + misc A/B slot control) required by
+# update_engine_sideload when flashing A/B OTA ROM zips in recovery.
+service vendor.boot-mediatek /system/bin/hw/android.hardware.boot-service.mediatek_recovery
+    class hal
+    user root
+    group root
+    seclabel u:r:recovery:s0
+    interface aidl android.hardware.boot.IBootControl/default
+
 # AnyKernel3 (and other zips using its update-binary) bind the ROM's /system
 # over ours and mount APEXes with `-t ext4` only; ColorOS/HyperOS APEXes are
 # erofs, so the ROM's /system/bin/getprop (linker in com.android.runtime)
