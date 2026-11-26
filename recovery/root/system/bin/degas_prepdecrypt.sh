@@ -58,6 +58,17 @@ SYSPROP="$SYS/system/build.prop"
 REL=$(prop_from ro.build.version.release "$SYSPROP")
 SPL=$(prop_from ro.build.version.security_patch "$SYSPROP")
 VSPL=$(prop_from ro.vendor.build.security_patch "$VEN/build.prop")
+
+# Match userdata filename encryption cipher to the installed ROM before
+# crypto.ready=1 (libtar calls ReadDefaultFstab after crypto.ready=1):
+# HyperOS/saiOS use aes-256-cts; AOSP Android 17 ROMs (EvoX/Halcyon) use aes-256-hctr2.
+if grep -q "aes-256-hctr2" "$VEN/build.prop" "$VEN/etc/fstab.mt6897" 2>/dev/null; then
+	if sed 's/aes-256-xts:aes-256-cts/aes-256-xts:aes-256-hctr2/g' /system/etc/recovery.fstab > /tmp/recovery.fstab.tmp; then
+		cat /tmp/recovery.fstab.tmp > /system/etc/recovery.fstab
+		rm -f /tmp/recovery.fstab.tmp
+		log "detected aes-256-hctr2 in vendor; updated recovery.fstab"
+	fi
+fi
 cleanup
 
 log "from build.prop: release='$REL' security_patch='$SPL' vendor_security_patch='$VSPL'"
