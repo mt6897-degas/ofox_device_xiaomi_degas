@@ -23,8 +23,8 @@ mi_product   /mnt/vendor/mi_product ext4   ro  wait,slotselect,logical,first_sta
 # userdata — FBE v2 + metadata encryption (keydirectory on /metadata), as stock fstab.mt6897.
 /dev/block/by-name/userdata /data f2fs noatime,nosuid,nodev,gc_merge,discard,noflush_merge,fsync_mode=nobarrier,reserve_root=134217,resgid=1065,atgc,age_extent_cache,inlinecrypt wait,check,formattable,quota,latemount,resize,reservedsize=128m,checkpoint=fs,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized,keydirectory=/metadata/vold/metadata_encryption,fsverity,sysfs_path=/sys/devices/platform/soc/112b0000.ufshci
 
-# metadata — f2fs. READ-ONLY while FBE decryption is being brought up.
-/dev/block/by-name/metadata /metadata f2fs ro,noatime,nosuid,nodev wait,first_stage_mount
+# metadata — f2fs (rw needed by update_engine_sideload / libsnapshot for /metadata/ota)
+/dev/block/by-name/metadata /metadata f2fs noatime,nosuid,nodev,discard wait,first_stage_mount
 
 # cache
 /dev/block/by-name/rescue /cache ext4 noatime,nosuid,nodev,noauto_da_alloc,discard wait,check,formattable
