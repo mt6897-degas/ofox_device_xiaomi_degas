@@ -191,7 +191,7 @@ jobs:
           cd "$OFOX_DIR"
           export ALLOW_MISSING_DEPENDENCIES=true
           export FOX_BUILD_DEVICE=degas
-          export OF_MAINTAINER=saiquer
+          export OF_MAINTAINER=Unofficial
           export _JAVA_OPTIONS="-Xmx4g"
           source build/envsetup.sh
           lunch ofox_degas-bp2a-eng

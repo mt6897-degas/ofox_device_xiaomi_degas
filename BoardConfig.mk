@@ -171,7 +171,7 @@ TW_INCLUDE_RESETPROP := true
 # ── OrangeFox ────────────────────────────────────────────────────────────────
 # Names verified against bootable/recovery/orangefox.mk (fox_16.0). FOX_* vars
 # read by vendor/recovery/OrangeFox_A16.sh are exported from vendorsetup.sh.
-OF_MAINTAINER := saiquer
+OF_MAINTAINER := Unofficial
 OF_FORCE_PREBUILT_KERNEL := 1
 OF_USE_LZ4_COMPRESSION := 1
 OF_USE_MAGISKBOOT := 1
