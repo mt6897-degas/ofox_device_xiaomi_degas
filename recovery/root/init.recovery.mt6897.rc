@@ -27,13 +27,20 @@ service degas_haptics_link /system/bin/sh /system/bin/degas_haptics_link.sh
     seclabel u:r:recovery:s0
 
 # AIDL BootControl HAL (MediaTek UFS + misc A/B slot control) required by
-# update_engine_sideload when flashing A/B OTA ROM zips in recovery.
+# update_engine_sideload when flashing A/B OTA ROM zips and for slot switching.
 service vendor.boot-mediatek /system/bin/hw/android.hardware.boot-service.mediatek_recovery
     class hal
     user root
     group root
     seclabel u:r:recovery:s0
     interface aidl android.hardware.boot.IBootControl/default
+
+# Start BootControl early in post-fs (after servicemanager & /dev/ufs-bsg0 are ready)
+# so it is registered before recovery itself queries IBootControl on boot.
+on post-fs
+    wait /dev/block/by-name/misc 5
+    wait /dev/ufs-bsg0 5
+    start vendor.boot-mediatek
 
 # AnyKernel3 (and other zips using its update-binary) bind the ROM's /system
 # over ours and mount APEXes with `-t ext4` only; ColorOS/HyperOS APEXes are
@@ -72,7 +79,24 @@ on fs && property:sys.usb.configfs=1
     # keep it to the same simple options adb uses.
     mount functionfs mtp /dev/usb-ffs/mtp uid=2000,gid=2000
 
+on property:sys.usb.config=none && property:sys.usb.configfs=1
+    rm /config/usb_gadget/g1/configs/b.1/f2
+
+on property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
+    start adbd
+
+on property:sys.usb.config=mtp && property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
+    rm /config/usb_gadget/g1/configs/b.1/f1
+    rm /config/usb_gadget/g1/configs/b.1/f2
+    write /config/usb_gadget/g1/idProduct 0x4EE1
+    write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp"
+    symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f1
+    write /config/usb_gadget/g1/UDC ${sys.usb.controller}
+    setprop sys.usb.state ${sys.usb.config}
+
 on property:sys.usb.config=mtp,adb && property:sys.usb.ffs.ready=1 && property:sys.usb.ffs.mtp.ready=1 && property:sys.usb.configfs=1
+    rm /config/usb_gadget/g1/configs/b.1/f1
+    rm /config/usb_gadget/g1/configs/b.1/f2
     write /config/usb_gadget/g1/idProduct 0x4EE2
     write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp,adb"
     symlink /config/usb_gadget/g1/functions/ffs.mtp /config/usb_gadget/g1/configs/b.1/f1

@@ -1,0 +1,9 @@
+# hwservicemanager is disabled on degas recovery (AIDL-only HALs:
+# KeyMint 3.0, Gatekeeper, Weaver, eSE, and BootControl are all AIDL).
+# Leaving hwservicemanager disabled avoids 10-second shutdown spam in logcat.
+service hwservicemanager /system/bin/hwservicemanager
+    user root
+    group root
+    onrestart setprop hwservicemanager.ready false
+    disabled
+    seclabel u:r:recovery:s0
