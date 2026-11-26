@@ -12,6 +12,8 @@ on boot
     insmod /vendor/lib/modules/mtk_peak_power_budget.ko
     insmod /vendor/lib/modules/flashlight.ko
     insmod /vendor/lib/modules/lm3644.ko
+    insmod /vendor/lib/modules/si_haptic.ko
+    insmod /vendor/lib/modules/haptic.ko
     write /sys/class/touch/touch_dev/enable_touch_raw 0
     write /sys/class/touch/touch_dev/panel_display "U"
     start degas_sbin_getprop
