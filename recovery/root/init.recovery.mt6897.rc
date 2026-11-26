@@ -14,9 +14,17 @@ on boot
     insmod /vendor/lib/modules/lm3644.ko
     insmod /vendor/lib/modules/si_haptic.ko
     insmod /vendor/lib/modules/haptic.ko
+    start degas_haptics_link
     write /sys/class/touch/touch_dev/enable_touch_raw 0
     write /sys/class/touch/touch_dev/panel_display "U"
     start degas_sbin_getprop
+
+service degas_haptics_link /system/bin/sh /system/bin/degas_haptics_link.sh
+    user root
+    group root
+    disabled
+    oneshot
+    seclabel u:r:recovery:s0
 
 # AnyKernel3 (and other zips using its update-binary) bind the ROM's /system
 # over ours and mount APEXes with `-t ext4` only; ColorOS/HyperOS APEXes are
