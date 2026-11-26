@@ -11,7 +11,7 @@ if [ -z "$SUF" ]; then
 fi
 [ -z "$SUF" ] && SUF="_a"
 
-for part in boot init_boot vendor_boot dtbo vbmeta; do
+for part in boot init_boot vendor_boot dtbo vbmeta vbmeta_system vbmeta_vendor; do
     src="/dev/block/by-name/${part}${SUF}"
     dst="/dev/block/by-name/${part}"
     if [ -e "$src" ]; then

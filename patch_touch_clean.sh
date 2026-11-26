@@ -132,11 +132,64 @@ with tempfile.TemporaryDirectory(prefix="ofox_repack_") as td:
                 shutil.copy2(src_fw, dst_fw)
                 os.chmod(dst_fw, 0o644)
 
-    # Ensure degas_slot_symlinks.sh & degas_prepdecrypt.sh are executable
-    for sh_name in ("degas_slot_symlinks.sh", "degas_prepdecrypt.sh"):
-        sh_p = rec_dir / "system/bin" / sh_name
-        if sh_p.is_file():
-            os.chmod(sh_p, 0o755)
+    # Sync device-tree recovery/root overlays (init rc, fstab, flags, scripts, HALs, tools)
+    overlay_files = [
+        ("init.recovery.mt6897.rc", 0o750),
+        ("init.recovery.usb.rc", 0o750),
+        ("system/etc/recovery.fstab", 0o644),
+        ("system/etc/twrp.flags", 0o644),
+        ("system/etc/init/hwservicemanager.rc", 0o644),
+        ("system/bin/degas_prepdecrypt.sh", 0o755),
+        ("system/bin/degas_slot_symlinks.sh", 0o755),
+        ("system/bin/degas_flashlight.sh", 0o755),
+        ("system/bin/degas_haptics_link.sh", 0o755),
+        ("system/bin/dmctl", 0o755),
+        ("system/bin/fsck.f2fs", 0o755),
+        ("system/bin/hw/android.hardware.boot-service.mediatek_recovery", 0o755),
+        ("vendor/etc/vintf/manifest/android.hardware.boot-service.mediatek.xml", 0o644),
+    ]
+    for rel, mode in overlay_files:
+        src = dt_dir / "recovery/root" / rel
+        if src.is_file():
+            dst = rec_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            os.chmod(dst, mode)
+
+    # Wrap /system/bin/make_f2fs with degas_make_f2fs.sh so Format Data cleanly
+    # tears down dm-default-key (userdata) and stale /metadata encryption keys.
+    wrapper_src = dt_dir / "recovery/root/system/bin/degas_make_f2fs.sh"
+    if wrapper_src.is_file():
+        mkf = rec_dir / "system/bin/make_f2fs"
+        mkf_real = rec_dir / "system/bin/make_f2fs.real"
+        if not mkf_real.is_file() and mkf.is_file():
+            if mkf.read_bytes()[:4] == b"\x7fELF":
+                shutil.move(str(mkf), str(mkf_real))
+                os.chmod(mkf_real, 0o755)
+        if mkf_real.is_file():
+            shutil.copy2(wrapper_src, mkf)
+            os.chmod(mkf, 0o755)
+            # Remove duplicate standalone copy if present
+            dup = rec_dir / "system/bin/degas_make_f2fs.sh"
+            if dup.is_file():
+                dup.unlink()
+            print("  [+] Wrapped /system/bin/make_f2fs -> make_f2fs.real + degas_make_f2fs.sh")
+
+    # Remove dead HIDL boot@1.{0,1,2} stubs (degas uses AIDL vendor.boot-mediatek)
+    for ver in ("1.0", "1.1", "1.2"):
+        for dead in (
+            rec_dir / f"system/etc/init/android.hardware.boot@{ver}-service.rc",
+            rec_dir / f"system/bin/android.hardware.boot@{ver}-service",
+        ):
+            if dead.exists() or dead.is_symlink():
+                dead.unlink()
+
+    # Ensure all /sbin helper scripts & magiskboot are executable (OFRP PRODUCT_COPY_FILES leaves 0644)
+    sbin_dir = rec_dir / "sbin"
+    if sbin_dir.is_dir():
+        for entry in sbin_dir.iterdir():
+            if entry.is_file() and not entry.is_symlink() and not entry.name.endswith(".xml"):
+                os.chmod(entry, 0o755)
 
     # Sanity-check intact init.recovery.mt6897.rc
     init_rc = rec_dir / "init.recovery.mt6897.rc"

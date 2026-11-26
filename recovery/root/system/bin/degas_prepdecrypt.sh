@@ -34,14 +34,22 @@ mount_ro() {
 }
 
 cleanup() {
-	umount "$SYS" 2>/dev/null
-	umount "$VEN" 2>/dev/null
+	umount "$SYS" 2>/dev/null || umount -l "$SYS" 2>/dev/null
+	umount "$VEN" 2>/dev/null || umount -l "$VEN" 2>/dev/null
 	rmdir "$SYS" "$VEN" 2>/dev/null
 }
 
 prop_from() { grep -m1 "^$1=" "$2" 2>/dev/null | cut -d= -f2-; }
 
 log "slot suffix '$SUF'"
+
+# Wait briefly for dm-linear logical partition mapper nodes if recovery just created them
+w=0
+while [ "$w" -lt 15 ]; do
+	[ -e "/dev/block/mapper/system$SUF" ] && [ -e "/dev/block/mapper/vendor$SUF" ] && break
+	sleep 0.2
+	w=$((w + 1))
+done
 
 if ! mount_ro "/dev/block/mapper/system$SUF" "$SYS"; then
 	err "cannot mount system$SUF read-only; TEE stack NOT started"
@@ -60,9 +68,9 @@ SPL=$(prop_from ro.build.version.security_patch "$SYSPROP")
 VSPL=$(prop_from ro.vendor.build.security_patch "$VEN/build.prop")
 
 # Match userdata filename encryption cipher to the installed ROM before
-# crypto.ready=1 (libtar calls ReadDefaultFstab after crypto.ready=1):
+# crypto.ready=1 (libfscrypt calls ReadDefaultFstab after crypto.ready=1):
 # HyperOS/saiOS use aes-256-cts; AOSP Android 17 ROMs (EvoX/Halcyon) use aes-256-hctr2.
-if grep -q "aes-256-hctr2" "$VEN/build.prop" "$VEN/etc/fstab.mt6897" 2>/dev/null; then
+if grep -q "aes-256-hctr2" "$VEN/build.prop" "$VEN/etc"/fstab* 2>/dev/null; then
 	if sed 's/aes-256-xts:aes-256-cts/aes-256-xts:aes-256-hctr2/g' /system/etc/recovery.fstab > /tmp/recovery.fstab.tmp; then
 		cat /tmp/recovery.fstab.tmp > /system/etc/recovery.fstab
 		rm -f /tmp/recovery.fstab.tmp
